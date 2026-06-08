@@ -708,4 +708,28 @@ func mainMenu() {
 		})
 
 		fmt.Printf("\n %s Enter choice [1-5]:\n > ", ASK)
-		choice, _
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(choice)
+
+		switch choice {
+		case "1":
+			installNahan()
+		case "2":
+			updateNahan()
+		case "3":
+			statusNahan()
+		case "4":
+			uninstallNahan()
+		case "5":
+			fmt.Printf("\n %s Goodbye!\n\n", OK)
+			os.Exit(0)
+		default:
+			fmt.Printf("\n %s Invalid. Use 1-5.\n", ERR)
+			time.Sleep(time.Second)
+		}
+	}
+}
+
+func main() {
+	mainMenu()
+}
