@@ -146,7 +146,7 @@ func runCmdSilent(args ...string) (string, error) {
 }
 
 func wrangler(args ...string) string {
-	if _, err := exec.LookPath("wrangler"); err == nil {
+	if commandExists("wrangler") {
 		return "wrangler"
 	}
 	return "npx"
@@ -216,15 +216,18 @@ func showHeader() {
 
 // ─── Dependency Check ─────────────────────────────────────────────────────────
 
-// commandExists checks if a command exists - Termux compatible (avoids faccessat)
+// commandExists checks if a command exists by searching PATH manually
+// This avoids faccessat syscall which crashes on Termux/Android
 func commandExists(name string) bool {
-	cmd := exec.Command(name, "--version")
-	err := cmd.Run()
-	if err == nil {
-		return true
+	pathEnv := os.Getenv("PATH")
+	if pathEnv == "" {
+		pathEnv = "/usr/local/bin:/usr/bin:/bin:/data/data/com.termux/files/usr/bin"
 	}
-	if _, ok := err.(*exec.ExitError); ok {
-		return true
+	for _, dir := range strings.Split(pathEnv, ":") {
+		full := dir + "/" + name
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			return true
+		}
 	}
 	return false
 }
@@ -360,9 +363,9 @@ database_id = "%s"
 	// Download _worker.js
 	fmt.Printf("\n %s Downloading latest nahan worker.js...\n", INFO)
 	dlArgs := []string{}
-	if _, e := exec.LookPath("curl"); e == nil {
+	if commandExists("curl") {
 		dlArgs = []string{"curl", "-fsSL", "-o", "_worker.js", workerJSURL}
-	} else if _, e := exec.LookPath("wget"); e == nil {
+	} else if commandExists("wget") {
 		dlArgs = []string{"wget", "-q", "-O", "_worker.js", workerJSURL}
 	}
 	if len(dlArgs) > 0 {
@@ -553,9 +556,9 @@ func updateNahan() {
 
 	// Download latest worker.js
 	dlArgs := []string{}
-	if _, e := exec.LookPath("curl"); e == nil {
+	if commandExists("curl") {
 		dlArgs = []string{"curl", "-fsSL", "-o", "_worker.js", workerJSURL}
-	} else if _, e := exec.LookPath("wget"); e == nil {
+	} else if commandExists("wget") {
 		dlArgs = []string{"wget", "-q", "-O", "_worker.js", workerJSURL}
 	}
 
@@ -690,27 +693,4 @@ func mainMenu() {
 
 		fmt.Printf("\n %s Enter choice [1-5]:\n ❯ ", ASK)
 		choice, _ := reader.ReadString('\n')
-		choice = strings.TrimSpace(choice)
-
-		switch choice {
-		case "1":
-			installNahan()
-		case "2":
-			updateNahan()
-		case "3":
-			statusNahan()
-		case "4":
-			uninstallNahan()
-		case "5":
-			fmt.Printf("\n %s Goodbye! \n\n", OK)
-			os.Exit(0)
-		default:
-			fmt.Printf("\n %s Invalid option. Use 1-5.\n", ERR)
-			time.Sleep(time.Second)
-		}
-	}
-}
-
-func main() {
-	mainMenu()
-}
+		choice = strings.Tr
