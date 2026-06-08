@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -217,28 +216,41 @@ func showHeader() {
 
 // ─── Dependency Check ─────────────────────────────────────────────────────────
 
+// commandExists checks if a command exists - Termux compatible (avoids faccessat)
+func commandExists(name string) bool {
+	cmd := exec.Command(name, "--version")
+	err := cmd.Run()
+	if err == nil {
+		return true
+	}
+	if _, ok := err.(*exec.ExitError); ok {
+		return true
+	}
+	return false
+}
+
 func checkDependencies() bool {
 	fmt.Printf("\n %s Checking dependencies...\n", INFO)
 
 	// Check Node.js
-	if _, err := exec.LookPath("node"); err != nil {
+	if !commandExists("node") {
 		box(RED+"[!] Node.js not found"+NC, []string{
 			"Node.js is required to run Wrangler.",
-			"Install it from: " + CYAN + "https://nodejs.org" + NC,
+			"In Termux: pkg install nodejs",
 		})
 		return false
 	}
 	fmt.Printf(" %s Node.js: %sOK%s\n", OK, GREEN, NC)
 
 	// Check npm
-	if _, err := exec.LookPath("npm"); err != nil {
-		fmt.Printf(" %s npm not found — please install it alongside Node.js\n", ERR)
+	if !commandExists("npm") {
+		fmt.Printf(" %s npm not found. In Termux: pkg install nodejs\n", ERR)
 		return false
 	}
 	fmt.Printf(" %s npm: %sOK%s\n", OK, GREEN, NC)
 
-	// Check wrangler (global or npx)
-	if _, err := exec.LookPath("wrangler"); err == nil {
+	// Check wrangler
+	if commandExists("wrangler") {
 		out, _ := runCmdSilent("wrangler", "--version")
 		fmt.Printf(" %s Wrangler (global): %s%s%s\n", OK, CYAN, strings.TrimSpace(out), NC)
 	} else {
@@ -652,9 +664,9 @@ func statusNahan() {
 // ─── MAIN MENU ────────────────────────────────────────────────────────────────
 
 func mainMenu() {
-	// Handle Ctrl+C gracefully
+	// Handle Ctrl+C gracefully (os.Interrupt only — Termux compatible)
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(c, os.Interrupt)
 	go func() {
 		<-c
 		fmt.Printf("\n\n %s Goodbye! \n\n", OK)
