@@ -3,15 +3,27 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
 	"strings"
 	"time"
 )
+
+// httpClient forces IPv4 — fixes Termux/Android IPv6 DNS issue
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: \&http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return (\&net.Dialer{}).DialContext(ctx, "tcp4", addr)
+		},
+	},
+}
 
 // ─── Colors ───────────────────────────────────────────────────────────────────
 const (
@@ -156,7 +168,7 @@ func cfRequest(method, path, token string, body interface{}) (map[string]interfa
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := httpClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -207,7 +219,7 @@ func cfUploadWorker(accountID, workerName, token, scriptContent string, dbName, 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := httpClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -299,7 +311,7 @@ func createD1DB(accountID, dbName, token string) (string, error) {
 func downloadWorkerJS() (string, error) {
 	done := make(chan bool)
 	go spinner(done, "Downloading latest nahan worker.js...")
-	resp, err := http.Get(workerJSURL)
+	resp, err := httpClient.Get(workerJSURL)
 	done <- true
 	if err != nil {
 		return "", err
