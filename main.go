@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.2"
+const VERSION = "v1.1.3"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -87,7 +87,11 @@ type WorkerEntry struct {
 	DBName      string
 }
 
+// session token — در طول اجرا نگه داشته می‌شه
+var sessionToken = ""
+
 const configFile = ".nahan.json"
+const tokenFile = ".nahan-token"
 const workerJSURL = "https://raw.githubusercontent.com/itsyebekhe/nahan/main/_worker.js"
 const cfAPI = "https://api.cloudflare.com/client/v4"
 const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -109,12 +113,6 @@ func clearScreen() {
 	} else {
 		fmt.Print("\033[H\033[2J")
 	}
-}
-
-func prompt(label string) string {
-	fmt.Printf(" %s %s\n > ", ASK, label)
-	text, _ := reader.ReadString('\n')
-	return strings.TrimSpace(text)
 }
 
 func pressEnter(msg string) {
@@ -179,6 +177,18 @@ func loadConfig() (Config, bool) {
 	var cfg Config
 	json.Unmarshal(data, &cfg)
 	return cfg, cfg.APIToken != ""
+}
+
+func saveToken(token string) {
+	os.WriteFile(tokenFile, []byte(token), 0600)
+}
+
+func loadToken() string {
+	data, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // ─── Cloudflare API ───────────────────────────────────────────────────────────
@@ -267,7 +277,6 @@ func getAccounts(token string) ([]map[string]interface{}, error) {
 	return accounts, nil
 }
 
-// listWorkersForAccount لیست همه worker های یه اکانت رو برمی‌گردونه
 func listWorkersForAccount(accountID, token string) ([]map[string]interface{}, error) {
 	result, err := cfRequest("GET",
 		fmt.Sprintf("/accounts/%s/workers/scripts", accountID),
@@ -374,23 +383,48 @@ func enableWorkerSubdomain(accountID, workerName, token string) string {
 	return getWorkerSubdomain(accountID, workerName, token)
 }
 
-// printOutputURLs خروجی URL های نهایی رو بدون https:// و /sync/dash چاپ می‌کنه
+func listAllWorkers(token string) ([]WorkerEntry, error) {
+	accounts, err := getAccounts(token)
+	if err != nil {
+		return nil, err
+	}
+	var all []WorkerEntry
+	for _, acc := range accounts {
+		accID, _ := acc["id"].(string)
+		accName, _ := acc["name"].(string)
+		done := make(chan bool)
+		go spinner(done, "Listing workers for "+accName+"...")
+		workers, err := listWorkersForAccount(accID, token)
+		done <- true
+		if err != nil || len(workers) == 0 {
+			continue
+		}
+		for _, w := range workers {
+			name, _ := w["id"].(string)
+			domain := getWorkerSubdomain(accID, name, token)
+			all = append(all, WorkerEntry{
+				AccountID:   accID,
+				AccountName: accName,
+				WorkerName:  name,
+				WorkerURL:   domain,
+			})
+		}
+	}
+	return all, nil
+}
+
 func printOutputURLs(entries []WorkerEntry) {
 	fmt.Printf("\n%s-- [ OUTPUT URLS ] --%s\n\n", GREEN+BOLD, NC)
 	for _, e := range entries {
 		fmt.Println(e.WorkerURL)
 	}
 	fmt.Println()
-
-	// ذخیره به فایل
 	var sb strings.Builder
 	for _, e := range entries {
 		sb.WriteString(e.WorkerURL + "\n")
 	}
 	os.WriteFile("nahan-urls.txt", []byte(sb.String()), 0644)
 	fmt.Printf(" %s URLs saved to: %snahan-urls.txt%s\n", OK, CYAN, NC)
-
-	// ذخیره JSON
 	type URLEntry struct {
 		Account string `json:"account"`
 		Worker  string `json:"worker"`
@@ -419,18 +453,26 @@ func showHeader() {
 	fmt.Println(`██║ ╚████║██║  ██║██║  ██║██║  ██║██║ ╚████║`)
 	fmt.Println(`╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝`)
 	fmt.Println(NC)
+	// نمایش وضعیت توکن
+	tokenStatus := RED + "Not set" + NC
+	shortToken := ""
+	if sessionToken != "" {
+		shortToken = sessionToken[:8] + "..." + sessionToken[len(sessionToken)-4:]
+		tokenStatus = GREEN + "Active " + NC + DIM + "(" + shortToken + ")" + NC
+	}
 	fmt.Println(CYAN + "+----------------------------------------------------+" + NC)
 	fmt.Printf(CYAN+"|"+NC+"   "+BOLD+"Nahan Edge Gateway Wizard  --  Go Edition"+NC+"   "+CYAN+"|"+NC+"\n")
 	fmt.Printf(CYAN+"|"+NC+"   "+DIM+"No Wrangler. Pure API. Works on Android."+NC+"    "+CYAN+"|"+NC+"\n")
 	fmt.Printf(CYAN+"|"+NC+"   "+DIM+"Version: %-38s"+NC+CYAN+"|"+NC+"\n", VERSION)
+	fmt.Printf(CYAN+"|"+NC+"   Token: %-50s"+CYAN+"|"+NC+"\n", tokenStatus)
 	fmt.Println(CYAN + "+----------------------------------------------------+" + NC)
 }
 
-// ─── INSTALL ──────────────────────────────────────────────────────────────────
-func installNahan() {
+// ─── SET TOKEN ────────────────────────────────────────────────────────────────
+func setToken() {
 	clearScreen()
 	showHeader()
-	fmt.Printf("\n%s-- [ PHASE 1 ] CLOUDFLARE API TOKEN --%s\n\n", MAGENTA+BOLD, NC)
+	fmt.Printf("\n%s-- [ SET API TOKEN ] --%s\n\n", MAGENTA+BOLD, NC)
 
 	box(INFO+" How to get your API Token", []string{
 		"1. Go to: dash.cloudflare.com/profile/api-tokens",
@@ -441,17 +483,62 @@ func installNahan() {
 		"6. Copy the token and paste it below",
 	})
 
-	fmt.Println()
-	fmt.Printf(" %s Paste your Cloudflare API Token:\n > ", ASK)
-	tokenRaw, _ := reader.ReadString('\n')
-	token := strings.TrimSpace(tokenRaw)
-	if token == "" {
+	if sessionToken != "" {
+		fmt.Printf("\n %s Current token: %s%s...%s\n", INFO, CYAN, sessionToken[:8], NC)
+		fmt.Printf(" %s Press Enter to keep current token, or paste a new one:\n > ", ASK)
+	} else {
+		fmt.Printf("\n %s Paste your Cloudflare API Token:\n > ", ASK)
+	}
+
+	raw, _ := reader.ReadString('\n')
+	input := strings.TrimSpace(raw)
+
+	if input == "" && sessionToken != "" {
+		fmt.Printf(" %s Keeping current token.\n", OK)
+		pressEnter("Press Enter to return...")
+		return
+	}
+	if input == "" {
 		fmt.Printf(" %s Token cannot be empty.\n", ERR)
 		pressEnter("Press Enter to return...")
 		return
 	}
 
-	accounts, err := getAccounts(token)
+	// تأیید توکن
+	done := make(chan bool)
+	go spinner(done, "Verifying token...")
+	result, err := cfRequest("GET", "/accounts?per_page=1", input, nil)
+	done <- true
+
+	if err != nil || func() bool { s, _ := result["success"].(bool); return !s }() {
+		fmt.Printf("\n %s Invalid token or connection error.\n", ERR)
+		pressEnter("Press Enter to return...")
+		return
+	}
+
+	accounts, _ := result["result"].([]interface{})
+	accountCount := len(accounts)
+
+	sessionToken = input
+	saveToken(input)
+
+	fmt.Printf("\n %s Token verified! %s%d%s account(s) accessible.\n", OK, CYAN, accountCount, NC)
+	pressEnter("Press Enter to return to menu...")
+}
+
+// ─── INSTALL ──────────────────────────────────────────────────────────────────
+func installNahan() {
+	clearScreen()
+	showHeader()
+	fmt.Printf("\n%s-- [ INSTALL ] DEPLOY TO CLOUDFLARE --%s\n\n", MAGENTA+BOLD, NC)
+
+	if sessionToken == "" {
+		fmt.Printf(" %s No API token set. Please set a token first (option 6).\n", ERR)
+		pressEnter("Press Enter to return...")
+		return
+	}
+
+	accounts, err := getAccounts(sessionToken)
 	if err != nil {
 		fmt.Printf("\n %s %s\n", ERR, err.Error())
 		pressEnter("Press Enter to return...")
@@ -463,7 +550,7 @@ func installNahan() {
 		return
 	}
 
-	fmt.Printf("\n %s Found %s%d%s account(s):\n\n", OK, CYAN, len(accounts), NC)
+	fmt.Printf(" %s Found %s%d%s account(s):\n\n", OK, CYAN, len(accounts), NC)
 	for i, acc := range accounts {
 		name, _ := acc["name"].(string)
 		id, _ := acc["id"].(string)
@@ -478,6 +565,9 @@ func installNahan() {
 		fmt.Printf("\n %s Enter numbers to deploy to (e.g: 1,3) or 'all':\n > ", ASK)
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
+		if input == "0" || strings.ToLower(input) == "back" {
+			return
+		}
 		if strings.ToLower(input) == "all" {
 			selectedAccounts = accounts
 		} else {
@@ -511,15 +601,13 @@ func installNahan() {
 	for _, acc := range selectedAccounts {
 		accID, _ := acc["id"].(string)
 		accName, _ := acc["name"].(string)
-
 		workerName := randomName(32)
 		dbName := "nahan-" + randomName(16)
 
 		fmt.Printf("\n %s Account: %s%s%s\n", INFO, CYAN, accName, NC)
 		fmt.Printf(" %s Worker : %s%s%s\n", INFO, DIM, workerName, NC)
-		fmt.Printf(" %s DB     : %s%s%s\n", INFO, DIM, dbName, NC)
 
-		dbID, err := createD1DB(accID, dbName, token)
+		dbID, err := createD1DB(accID, dbName, sessionToken)
 		if err != nil {
 			fmt.Printf(" %s DB failed: %s\n", ERR, err.Error())
 			fmt.Println(CYAN + strings.Repeat("-", 50) + NC)
@@ -528,7 +616,7 @@ func installNahan() {
 
 		done := make(chan bool)
 		go spinner(done, "Deploying Worker...")
-		err = cfUploadWorker(accID, workerName, token, scriptContent, dbID)
+		err = cfUploadWorker(accID, workerName, sessionToken, scriptContent, dbID)
 		done <- true
 		if err != nil {
 			fmt.Printf("\n %s Deploy failed: %s\n", ERR, err.Error())
@@ -536,12 +624,12 @@ func installNahan() {
 			continue
 		}
 
-		workerDomain := enableWorkerSubdomain(accID, workerName, token)
+		workerDomain := enableWorkerSubdomain(accID, workerName, sessionToken)
 		if workerDomain == "" {
 			workerDomain = workerName + ".YOUR-SUBDOMAIN.workers.dev"
 		}
 
-		fmt.Printf("\n %s Deployed! URL: %s%s%s\n", OK, CYAN, workerDomain, NC)
+		fmt.Printf("\n %s Deployed! %s%s%s\n", OK, CYAN, workerDomain, NC)
 
 		deployedEntries = append(deployedEntries, WorkerEntry{
 			AccountID:   accID,
@@ -552,10 +640,9 @@ func installNahan() {
 			DBName:      dbName,
 		})
 
-		// ذخیره config برای این اکانت
 		cfg := Config{
 			AccountID:  accID,
-			APIToken:   token,
+			APIToken:   sessionToken,
 			WorkerName: workerName,
 			DBName:     dbName,
 			DBID:       dbID,
@@ -564,8 +651,6 @@ func installNahan() {
 		cfgFile := fmt.Sprintf(".nahan-%s.json", accID[:8])
 		data, _ := json.MarshalIndent(cfg, "", "  ")
 		os.WriteFile(cfgFile, data, 0644)
-
-		// ذخیره config اصلی (آخرین اکانت)
 		saveConfig(cfg)
 
 		fmt.Println(CYAN + strings.Repeat("-", 50) + NC)
@@ -578,53 +663,19 @@ func installNahan() {
 	pressEnter("Press Enter to return to menu...")
 }
 
-// ─── listAllWorkers لیست همه worker های همه اکانت‌ها ─────────────────────────
-func listAllWorkers(token string) ([]WorkerEntry, error) {
-	accounts, err := getAccounts(token)
-	if err != nil {
-		return nil, err
-	}
-
-	var all []WorkerEntry
-	for _, acc := range accounts {
-		accID, _ := acc["id"].(string)
-		accName, _ := acc["name"].(string)
-
-		done := make(chan bool)
-		go spinner(done, "Listing workers for "+accName+"...")
-		workers, err := listWorkersForAccount(accID, token)
-		done <- true
-		if err != nil || len(workers) == 0 {
-			continue
-		}
-		for _, w := range workers {
-			name, _ := w["id"].(string)
-			domain := getWorkerSubdomain(accID, name, token)
-			all = append(all, WorkerEntry{
-				AccountID:   accID,
-				AccountName: accName,
-				WorkerName:  name,
-				WorkerURL:   domain,
-			})
-		}
-	}
-	return all, nil
-}
-
 // ─── UPDATE ───────────────────────────────────────────────────────────────────
 func updateNahan() {
 	clearScreen()
 	showHeader()
 	fmt.Printf("\n%s-- [ UPDATE ] SELECT WORKER TO UPDATE --%s\n\n", CYAN+BOLD, NC)
 
-	cfg, ok := loadConfig()
-	if !ok {
-		fmt.Printf(" %s No saved config. Run Install first.\n", ERR)
+	if sessionToken == "" {
+		fmt.Printf(" %s No API token set. Please set a token first (option 6).\n", ERR)
 		pressEnter("Press Enter to return...")
 		return
 	}
 
-	workers, err := listAllWorkers(cfg.APIToken)
+	workers, err := listAllWorkers(sessionToken)
 	if err != nil {
 		fmt.Printf("\n %s %s\n", ERR, err.Error())
 		pressEnter("Press Enter to return...")
@@ -636,21 +687,21 @@ func updateNahan() {
 		return
 	}
 
-	fmt.Printf("\n %s Found %s%d%s worker(s):\n\n", OK, CYAN, len(workers), NC)
+	fmt.Printf(" %s Found %s%d%s worker(s):\n\n", OK, CYAN, len(workers), NC)
 	for i, w := range workers {
 		fmt.Printf("   %s%d)%s [%s%s%s] %s%s%s\n",
-			GREEN, i+1, NC,
-			DIM, w.AccountName, NC,
-			CYAN, w.WorkerName, NC,
-		)
+			GREEN, i+1, NC, DIM, w.AccountName, NC, CYAN, w.WorkerName, NC)
 		if w.WorkerURL != "" {
 			fmt.Printf("      %s%s%s\n", DIM, w.WorkerURL, NC)
 		}
 	}
 
-	fmt.Printf("\n %s Enter numbers to update (e.g: 1,3) or 'all':\n > ", ASK)
+	fmt.Printf("\n %s Enter numbers to update (e.g: 1,3) or 'all' or '0' to cancel:\n > ", ASK)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
+	if input == "0" || strings.ToLower(input) == "back" {
+		return
+	}
 
 	var selected []WorkerEntry
 	if strings.ToLower(input) == "all" {
@@ -680,26 +731,28 @@ func updateNahan() {
 	fmt.Printf(" %s worker.js downloaded (%d KB)\n\n", OK, len(scriptContent)/1024)
 
 	for _, w := range selected {
-		fmt.Printf(" %s Updating: %s%s%s ...\n", INFO, CYAN, w.WorkerName, NC)
-
-		// نیاز به DBID داریم — از config فایل می‌خونیم
-		dbID := cfg.DBID
+		fmt.Printf(" %s Updating: %s%s%s\n", INFO, CYAN, w.WorkerName, NC)
+		dbID := ""
 		cfgFile := fmt.Sprintf(".nahan-%s.json", w.AccountID[:8])
 		if data, err := os.ReadFile(cfgFile); err == nil {
 			var c Config
-			if json.Unmarshal(data, &c) == nil && c.DBID != "" {
+			if json.Unmarshal(data, &c) == nil {
 				dbID = c.DBID
 			}
 		}
-
+		if dbID == "" {
+			if cfg, ok := loadConfig(); ok {
+				dbID = cfg.DBID
+			}
+		}
 		done := make(chan bool)
 		go spinner(done, "Redeploying...")
-		err = cfUploadWorker(w.AccountID, w.WorkerName, cfg.APIToken, scriptContent, dbID)
+		err = cfUploadWorker(w.AccountID, w.WorkerName, sessionToken, scriptContent, dbID)
 		done <- true
 		if err != nil {
 			fmt.Printf("\n %s Failed: %s\n", ERR, err.Error())
 		} else {
-			fmt.Printf(" %s Updated: %s%s%s\n", OK, CYAN, w.WorkerName, NC)
+			fmt.Printf(" %s Updated!\n", OK)
 		}
 	}
 
@@ -712,20 +765,18 @@ func statusNahan() {
 	showHeader()
 	fmt.Printf("\n%s-- [ STATUS ] ALL DEPLOYED WORKERS --%s\n\n", CYAN+BOLD, NC)
 
-	cfg, ok := loadConfig()
-	if !ok {
-		fmt.Printf(" %s No saved config. Run Install first.\n", WARN)
+	if sessionToken == "" {
+		fmt.Printf(" %s No API token set. Please set a token first (option 6).\n", ERR)
 		pressEnter("Press Enter to return...")
 		return
 	}
 
-	workers, err := listAllWorkers(cfg.APIToken)
+	workers, err := listAllWorkers(sessionToken)
 	if err != nil {
 		fmt.Printf("\n %s %s\n", ERR, err.Error())
 		pressEnter("Press Enter to return...")
 		return
 	}
-
 	if len(workers) == 0 {
 		fmt.Printf(" %s No workers found in any account.\n", WARN)
 		pressEnter("Press Enter to return...")
@@ -751,14 +802,13 @@ func uninstallNahan() {
 	showHeader()
 	fmt.Printf("\n%s-- [ UNINSTALL ] SELECT WORKER TO DELETE --%s\n\n", RED+BOLD, NC)
 
-	cfg, ok := loadConfig()
-	if !ok {
-		fmt.Printf(" %s No saved config. Run Install first.\n", WARN)
+	if sessionToken == "" {
+		fmt.Printf(" %s No API token set. Please set a token first (option 6).\n", ERR)
 		pressEnter("Press Enter to return...")
 		return
 	}
 
-	workers, err := listAllWorkers(cfg.APIToken)
+	workers, err := listAllWorkers(sessionToken)
 	if err != nil {
 		fmt.Printf("\n %s %s\n", ERR, err.Error())
 		pressEnter("Press Enter to return...")
@@ -770,18 +820,18 @@ func uninstallNahan() {
 		return
 	}
 
-	fmt.Printf("\n %s Found %s%d%s worker(s):\n\n", OK, CYAN, len(workers), NC)
+	fmt.Printf(" %s Found %s%d%s worker(s):\n\n", OK, CYAN, len(workers), NC)
 	for i, w := range workers {
 		fmt.Printf("   %s%d)%s [%s%s%s] %s%s%s\n",
-			RED, i+1, NC,
-			DIM, w.AccountName, NC,
-			CYAN, w.WorkerName, NC,
-		)
+			RED, i+1, NC, DIM, w.AccountName, NC, CYAN, w.WorkerName, NC)
 	}
 
-	fmt.Printf("\n %s Enter numbers to delete (e.g: 1,3) or 'all':\n > ", ASK)
+	fmt.Printf("\n %s Enter numbers to delete (e.g: 1,3) or 'all' or '0' to cancel:\n > ", ASK)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
+	if input == "0" || strings.ToLower(input) == "back" {
+		return
+	}
 
 	var selected []WorkerEntry
 	if strings.ToLower(input) == "all" {
@@ -808,14 +858,16 @@ func uninstallNahan() {
 	})
 	fmt.Println()
 
-	ans := prompt("Are you sure? (y/N)")
-	if strings.ToLower(ans) != "y" {
+	fmt.Printf(" %s Are you sure? (y/N)\n > ", ASK)
+	ans, _ := reader.ReadString('\n')
+	if strings.ToLower(strings.TrimSpace(ans)) != "y" {
 		fmt.Printf(" %s Cancelled.\n", OK)
 		time.Sleep(time.Second)
 		return
 	}
-	ans2 := prompt("Type DESTROY to confirm:")
-	if ans2 != "DESTROY" {
+	fmt.Printf(" %s Type DESTROY to confirm:\n > ", ASK)
+	ans2, _ := reader.ReadString('\n')
+	if strings.TrimSpace(ans2) != "DESTROY" {
 		fmt.Printf(" %s Confirmation failed.\n", ERR)
 		time.Sleep(time.Second)
 		return
@@ -824,12 +876,11 @@ func uninstallNahan() {
 	fmt.Println()
 	for _, w := range selected {
 		fmt.Printf(" %s Deleting: %s%s%s\n", INFO, CYAN, w.WorkerName, NC)
-
 		done := make(chan bool)
 		go spinner(done, "Deleting Worker...")
 		result, err := cfRequest("DELETE",
 			fmt.Sprintf("/accounts/%s/workers/scripts/%s", w.AccountID, w.WorkerName),
-			cfg.APIToken, nil,
+			sessionToken, nil,
 		)
 		done <- true
 		deleted := err == nil
@@ -839,10 +890,8 @@ func uninstallNahan() {
 		if deleted {
 			fmt.Printf(" %s Worker deleted\n", OK)
 		} else {
-			fmt.Printf(" %s Worker not found or already deleted\n", WARN)
+			fmt.Printf(" %s Not found or already deleted\n", WARN)
 		}
-
-		// حذف D1 اگه DBID داشته باشیم
 		cfgFile := fmt.Sprintf(".nahan-%s.json", w.AccountID[:8])
 		if data, err := os.ReadFile(cfgFile); err == nil {
 			var c Config
@@ -851,7 +900,7 @@ func uninstallNahan() {
 				go spinner(done2, "Deleting D1 database...")
 				cfRequest("DELETE",
 					fmt.Sprintf("/accounts/%s/d1/database/%s", w.AccountID, c.DBID),
-					cfg.APIToken, nil,
+					sessionToken, nil,
 				)
 				done2 <- true
 				fmt.Printf(" %s Database deleted\n", OK)
@@ -866,6 +915,12 @@ func uninstallNahan() {
 
 // ─── MAIN MENU ────────────────────────────────────────────────────────────────
 func mainMenu() {
+	// بارگذاری توکن ذخیره شده
+	saved := loadToken()
+	if saved != "" {
+		sessionToken = saved
+	}
+
 	for {
 		clearScreen()
 		showHeader()
@@ -877,11 +932,12 @@ func mainMenu() {
 			" " + YELLOW + "2)" + NC + "  Update Worker(s)",
 			" " + CYAN + "3)" + NC + "  View all deployed Workers",
 			" " + RED + "4)" + NC + "  Uninstall Worker(s)",
-			" " + BOLD + "5)" + NC + "  Exit",
+			" " + MAGENTA + "5)" + NC + "  Exit",
+			" " + BLUE + "6)" + NC + "  Set / Change API Token",
 			"",
 		})
 
-		fmt.Printf("\n %s Enter choice [1-5]:\n > ", ASK)
+		fmt.Printf("\n %s Enter choice [1-6]:\n > ", ASK)
 		choice, _ := reader.ReadString('\n')
 		choice = strings.TrimSpace(choice)
 
@@ -897,8 +953,10 @@ func mainMenu() {
 		case "5":
 			fmt.Printf("\n %s Goodbye!\n\n", OK)
 			os.Exit(0)
+		case "6":
+			setToken()
 		default:
-			fmt.Printf("\n %s Invalid. Use 1-5.\n", ERR)
+			fmt.Printf("\n %s Invalid. Use 1-6.\n", ERR)
 			time.Sleep(time.Second)
 		}
 	}
