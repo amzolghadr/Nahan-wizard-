@@ -15,17 +15,39 @@ import (
 	"time"
 )
 
-// httpClient forces IPv4 to fix Termux/Android IPv6 DNS issue
+// httpClient با DNS مستقیم روی 1.1.1.1 — برای Termux/Android
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp4", addr)
+			// DNS را bypass کرده و مستقیم از 1.1.1.1 resolve می‌کنیم
+			resolver := &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					d := net.Dialer{}
+					return d.DialContext(ctx, "udp", "1.1.1.1:53")
+				},
+			}
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			addrs, err := resolver.LookupHost(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			for _, a := range addrs {
+				// فقط IPv4
+				if net.ParseIP(a).To4() != nil {
+					d := net.Dialer{}
+					return d.DialContext(ctx, "tcp", net.JoinHostPort(a, port))
+				}
+			}
+			return nil, fmt.Errorf("no IPv4 address for %s", host)
 		},
 	},
 }
 
-// Colors
 const (
 	NC      = "\033[0m"
 	RED     = "\033[1;31m"
@@ -46,7 +68,6 @@ var (
 	ASK  = MAGENTA + "[?]" + NC
 )
 
-// Config
 type Config struct {
 	AccountID  string `json:"account_id"`
 	APIToken   string `json:"api_token"`
@@ -255,7 +276,6 @@ func createD1DB(accountID, dbName, token string) (string, error) {
 		}
 		return id, nil
 	}
-	// Try listing existing
 	done2 := make(chan bool)
 	go spinner(done2, "Database may exist, fetching list...")
 	listResult, err := cfRequest("GET",
