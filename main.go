@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.3"
+const VERSION = "v1.1.4"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
