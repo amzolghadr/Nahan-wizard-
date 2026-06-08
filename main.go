@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.5"
+const VERSION = "v1.1.6"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -706,7 +706,7 @@ func printWorkerList(workers []WorkerEntry, color string) {
 
 	counter := 1
 	for _, g := range groups {
-		fmt.Printf(" %s%s%s\n", RED+BOLD, g.name, NC)
+		fmt.Printf(" %s%s%s\n", GREEN+BOLD, g.name, NC)
 		for _, w := range g.workers {
 			fmt.Printf("   %s%d)%s %s%s%s", color, counter, NC, CYAN, w.WorkerName, NC)
 			if w.WorkerURL != "" {
