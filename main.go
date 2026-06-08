@@ -664,6 +664,38 @@ func installNahan() {
 }
 
 // ─── UPDATE ───────────────────────────────────────────────────────────────────
+func printWorkerList(workers []WorkerEntry, color string) {
+	// گروه‌بندی بر اساس اکانت
+	type group struct {
+		name    string
+		workers []WorkerEntry
+	}
+	var groups []group
+	seen := map[string]int{}
+	for _, w := range workers {
+		if idx, ok := seen[w.AccountID]; ok {
+			groups[idx].workers = append(groups[idx].workers, w)
+		} else {
+			seen[w.AccountID] = len(groups)
+			groups = append(groups, group{name: w.AccountName, workers: []WorkerEntry{w}})
+		}
+	}
+
+	counter := 1
+	for _, g := range groups {
+		fmt.Printf(" %s%s%s\n", CYAN+BOLD, g.name, NC)
+		for _, w := range g.workers {
+			fmt.Printf("   %s%d)%s %s%s%s", color, counter, NC, CYAN, w.WorkerName, NC)
+			if w.WorkerURL != "" {
+				fmt.Printf(" %s(%s)%s", DIM, w.WorkerURL, NC)
+			}
+			fmt.Println()
+			counter++
+		}
+		fmt.Println()
+	}
+}
+
 func updateNahan() {
 	clearScreen()
 	showHeader()
@@ -688,15 +720,8 @@ func updateNahan() {
 	}
 
 	fmt.Printf(" %s Found %s%d%s worker(s):\n\n", OK, CYAN, len(workers), NC)
-	for i, w := range workers {
-		fmt.Printf("   %s%d)%s [%s%s%s] %s%s%s\n",
-			GREEN, i+1, NC, DIM, w.AccountName, NC, CYAN, w.WorkerName, NC)
-		if w.WorkerURL != "" {
-			fmt.Printf("      %s%s%s\n", DIM, w.WorkerURL, NC)
-		}
-	}
-
-	fmt.Printf("\n %s Enter numbers to update (e.g: 1,3) or 'all' or '0' to cancel:\n > ", ASK)
+	printWorkerList(workers, GREEN)
+	fmt.Printf(" %s Enter numbers to update (e.g: 1,3) or 'all' or '0' to cancel:\n > ", ASK)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 	if input == "0" || strings.ToLower(input) == "back" {
@@ -784,14 +809,7 @@ func statusNahan() {
 	}
 
 	fmt.Printf(" %s Found %s%d%s worker(s):\n\n", OK, CYAN, len(workers), NC)
-	for i, w := range workers {
-		fmt.Printf(" %s%d. [%s] %s%s%s\n", BOLD, i+1, w.AccountName, CYAN, w.WorkerName, NC)
-		if w.WorkerURL != "" {
-			fmt.Printf("    URL:       %s%s%s\n", CYAN, w.WorkerURL, NC)
-			fmt.Printf("    Dashboard: %s%s/sync/dash%s\n", CYAN, "https://"+w.WorkerURL, NC)
-		}
-		fmt.Println()
-	}
+	printWorkerList(workers, CYAN)
 
 	pressEnter("Press Enter to return...")
 }
@@ -821,12 +839,8 @@ func uninstallNahan() {
 	}
 
 	fmt.Printf(" %s Found %s%d%s worker(s):\n\n", OK, CYAN, len(workers), NC)
-	for i, w := range workers {
-		fmt.Printf("   %s%d)%s [%s%s%s] %s%s%s\n",
-			RED, i+1, NC, DIM, w.AccountName, NC, CYAN, w.WorkerName, NC)
-	}
-
-	fmt.Printf("\n %s Enter numbers to delete (e.g: 1,3) or 'all' or '0' to cancel:\n > ", ASK)
+	printWorkerList(workers, RED)
+	fmt.Printf(" %s Enter numbers to delete (e.g: 1,3) or 'all' or '0' to cancel:\n > ", ASK)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 	if input == "0" || strings.ToLower(input) == "back" {
