@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.4"
+const VERSION = "v1.1.5"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -388,27 +388,50 @@ func listAllWorkers(token string) ([]WorkerEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	done := make(chan bool)
+	go spinner(done, "Fetching workers from all accounts...")
+
+	type result struct {
+		entries []WorkerEntry
+		order   int
+	}
+
+	ch := make(chan result, len(accounts))
+
+	for i, acc := range accounts {
+		go func(idx int, acc map[string]interface{}) {
+			accID, _ := acc["id"].(string)
+			accName, _ := acc["name"].(string)
+			workers, err := listWorkersForAccount(accID, token)
+			var entries []WorkerEntry
+			if err == nil {
+				for _, w := range workers {
+					name, _ := w["id"].(string)
+					domain := getWorkerSubdomain(accID, name, token)
+					entries = append(entries, WorkerEntry{
+						AccountID:   accID,
+						AccountName: accName,
+						WorkerName:  name,
+						WorkerURL:   domain,
+					})
+				}
+			}
+			ch <- result{entries: entries, order: idx}
+		}(i, acc)
+	}
+
+	// جمع‌آوری نتایج با حفظ ترتیب
+	results := make([][]WorkerEntry, len(accounts))
+	for range accounts {
+		r := <-ch
+		results[r.order] = r.entries
+	}
+	done <- true
+
 	var all []WorkerEntry
-	for _, acc := range accounts {
-		accID, _ := acc["id"].(string)
-		accName, _ := acc["name"].(string)
-		done := make(chan bool)
-		go spinner(done, "Listing workers for "+accName+"...")
-		workers, err := listWorkersForAccount(accID, token)
-		done <- true
-		if err != nil || len(workers) == 0 {
-			continue
-		}
-		for _, w := range workers {
-			name, _ := w["id"].(string)
-			domain := getWorkerSubdomain(accID, name, token)
-			all = append(all, WorkerEntry{
-				AccountID:   accID,
-				AccountName: accName,
-				WorkerName:  name,
-				WorkerURL:   domain,
-			})
-		}
+	for _, entries := range results {
+		all = append(all, entries...)
 	}
 	return all, nil
 }
@@ -683,7 +706,7 @@ func printWorkerList(workers []WorkerEntry, color string) {
 
 	counter := 1
 	for _, g := range groups {
-		fmt.Printf(" %s%s%s\n", CYAN+BOLD, g.name, NC)
+		fmt.Printf(" %s%s%s\n", RED+BOLD, g.name, NC)
 		for _, w := range g.workers {
 			fmt.Printf("   %s%d)%s %s%s%s", color, counter, NC, CYAN, w.WorkerName, NC)
 			if w.WorkerURL != "" {
