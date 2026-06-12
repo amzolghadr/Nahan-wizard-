@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.9"
+const VERSION = "v1.1.10"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -262,7 +262,7 @@ func cfUploadWorker(accountID, workerName, token, scriptContent, dbID string) er
 func addWizardTag(accountID, workerName, token string) {
 	// ابتدا settings فعلی رو بگیر
 	result, err := cfRequest("GET",
-		fmt.Sprintf("/accounts/%s/workers/scripts/%s/settings", accountID, workerName),
+		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-settings", accountID, workerName),
 		token, nil,
 	)
 	if err != nil {
@@ -282,7 +282,7 @@ func addWizardTag(accountID, workerName, token string) {
 	// tag جدید رو اضافه کن
 	newTags := append(existingTags, wizardTag)
 	cfRequest("PATCH",
-		fmt.Sprintf("/accounts/%s/workers/scripts/%s/settings", accountID, workerName),
+		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-settings", accountID, workerName),
 		token,
 		map[string]interface{}{"tags": newTags},
 	)
@@ -290,7 +290,7 @@ func addWizardTag(accountID, workerName, token string) {
 
 func getWorkerTags(accountID, workerName, token string) []string {
 	result, err := cfRequest("GET",
-		fmt.Sprintf("/accounts/%s/workers/scripts/%s/settings", accountID, workerName),
+		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-settings", accountID, workerName),
 		token, nil,
 	)
 	if err != nil {
