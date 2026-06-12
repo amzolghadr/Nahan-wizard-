@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.11"
+const VERSION = "v1.1.7"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -221,6 +221,7 @@ func cfUploadWorker(accountID, workerName, token, scriptContent, dbID string) er
 	metadata := map[string]interface{}{
 		"main_module":        "_worker.js",
 		"compatibility_date": "2023-10-30",
+		"tags":               []string{"nahan-wizard"},
 		"bindings": []map[string]interface{}{
 			{"type": "d1", "name": "IOT_DB", "database_id": dbID},
 		},
