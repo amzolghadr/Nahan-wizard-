@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.12"
+const VERSION = "v1.1.13"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -281,27 +281,32 @@ func addWizardTag(accountID, workerName, token string) {
 }
 
 func getWorkerTags(accountID, workerName, token string) []string {
+	// tag ها از لیست scripts خوانده می‌شن
 	result, err := cfRequest("GET",
-		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-settings", accountID, workerName),
+		fmt.Sprintf("/accounts/%s/workers/scripts", accountID),
 		token, nil,
 	)
 	if err != nil {
 		return nil
 	}
-	// API ممکنه result رو مستقیم یا داخل result بده
-	var raw []interface{}
-	if res, ok := result["result"].(map[string]interface{}); ok {
-		raw, _ = res["tags"].([]interface{})
-	} else {
-		raw, _ = result["tags"].([]interface{})
-	}
-	var tags []string
-	for _, t := range raw {
-		if s, ok := t.(string); ok {
-			tags = append(tags, s)
+	raw, _ := result["result"].([]interface{})
+	for _, w := range raw {
+		worker, ok := w.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if worker["id"] == workerName {
+			tags, _ := worker["tags"].([]interface{})
+			var result []string
+			for _, t := range tags {
+				if s, ok := t.(string); ok {
+					result = append(result, s)
+				}
+			}
+			return result
 		}
 	}
-	return tags
+	return nil
 }
 
 func hasWizardTag(tags []string) bool {
@@ -466,11 +471,13 @@ func listAllWorkers(token string) ([]WorkerEntry, error) {
 				for _, w := range workers {
 					name, _ := w["id"].(string)
 					domain := getWorkerSubdomain(accID, name, token)
+					tags := getWorkerTags(accID, name, token)
 					entries = append(entries, WorkerEntry{
 						AccountID:   accID,
 						AccountName: accName,
 						WorkerName:  name,
 						WorkerURL:   domain,
+						Tagged:      hasWizardTag(tags),
 					})
 				}
 			}
