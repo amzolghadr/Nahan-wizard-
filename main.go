@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.10"
+const VERSION = "v1.1.11"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -260,32 +260,23 @@ func cfUploadWorker(accountID, workerName, token, scriptContent, dbID string) er
 
 
 func addWizardTag(accountID, workerName, token string) {
-	// ابتدا settings فعلی رو بگیر
-	result, err := cfRequest("GET",
-		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-settings", accountID, workerName),
-		token, nil,
-	)
+	// tag رو با multipart/form-data ست کن
+	boundary := "WizardTagBoundary"
+	metaJSON := `{"tags":["nahan-wizard"]}`
+	var buf bytes.Buffer
+	buf.WriteString("--" + boundary + "\r\n")
+	buf.WriteString("Content-Disposition: form-data; name=\"metadata\"\r\n")
+	buf.WriteString("Content-Type: application/json\r\n\r\n")
+	buf.WriteString(metaJSON)
+	buf.WriteString("\r\n--" + boundary + "--\r\n")
+	url := fmt.Sprintf("%s/accounts/%s/workers/scripts/%s/settings", cfAPI, accountID, workerName)
+	req, err := http.NewRequest("PATCH", url, &buf)
 	if err != nil {
 		return
 	}
-	// tag های موجود رو بخون
-	var existingTags []string
-	if res, ok := result["result"].(map[string]interface{}); ok {
-		if tags, ok := res["tags"].([]interface{}); ok {
-			for _, t := range tags {
-				if s, ok := t.(string); ok && s != wizardTag {
-					existingTags = append(existingTags, s)
-				}
-			}
-		}
-	}
-	// tag جدید رو اضافه کن
-	newTags := append(existingTags, wizardTag)
-	cfRequest("PATCH",
-		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-settings", accountID, workerName),
-		token,
-		map[string]interface{}{"tags": newTags},
-	)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
+	httpClient.Do(req)
 }
 
 func getWorkerTags(accountID, workerName, token string) []string {
@@ -296,11 +287,13 @@ func getWorkerTags(accountID, workerName, token string) []string {
 	if err != nil {
 		return nil
 	}
-	res, ok := result["result"].(map[string]interface{})
-	if !ok {
-		return nil
+	// API ممکنه result رو مستقیم یا داخل result بده
+	var raw []interface{}
+	if res, ok := result["result"].(map[string]interface{}); ok {
+		raw, _ = res["tags"].([]interface{})
+	} else {
+		raw, _ = result["tags"].([]interface{})
 	}
-	raw, _ := res["tags"].([]interface{})
 	var tags []string
 	for _, t := range raw {
 		if s, ok := t.(string); ok {
