@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.8"
+const VERSION = "v1.1.7"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -260,22 +260,47 @@ func cfUploadWorker(accountID, workerName, token, scriptContent, dbID string) er
 
 
 func addWizardTag(accountID, workerName, token string) {
-	cfRequest("PUT",
-		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-tags", accountID, workerName),
+	// ابتدا settings فعلی رو بگیر
+	result, err := cfRequest("GET",
+		fmt.Sprintf("/accounts/%s/workers/scripts/%s/settings", accountID, workerName),
+		token, nil,
+	)
+	if err != nil {
+		return
+	}
+	// tag های موجود رو بخون
+	var existingTags []string
+	if res, ok := result["result"].(map[string]interface{}); ok {
+		if tags, ok := res["tags"].([]interface{}); ok {
+			for _, t := range tags {
+				if s, ok := t.(string); ok && s != wizardTag {
+					existingTags = append(existingTags, s)
+				}
+			}
+		}
+	}
+	// tag جدید رو اضافه کن
+	newTags := append(existingTags, wizardTag)
+	cfRequest("PATCH",
+		fmt.Sprintf("/accounts/%s/workers/scripts/%s/settings", accountID, workerName),
 		token,
-		[]string{wizardTag},
+		map[string]interface{}{"tags": newTags},
 	)
 }
 
 func getWorkerTags(accountID, workerName, token string) []string {
 	result, err := cfRequest("GET",
-		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-tags", accountID, workerName),
+		fmt.Sprintf("/accounts/%s/workers/scripts/%s/settings", accountID, workerName),
 		token, nil,
 	)
 	if err != nil {
 		return nil
 	}
-	raw, _ := result["result"].([]interface{})
+	res, ok := result["result"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	raw, _ := res["tags"].([]interface{})
 	var tags []string
 	for _, t := range raw {
 		if s, ok := t.(string); ok {
