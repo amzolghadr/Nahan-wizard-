@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.6"
+const VERSION = "v1.1.7"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -85,6 +85,7 @@ type WorkerEntry struct {
 	WorkerURL   string
 	DBID        string
 	DBName      string
+	Tagged      bool
 }
 
 // session token — در طول اجرا نگه داشته می‌شه
@@ -95,6 +96,7 @@ const tokenFile = ".nahan-token"
 const workerJSURL = "https://raw.githubusercontent.com/itsyebekhe/nahan/main/_worker.js"
 const cfAPI = "https://api.cloudflare.com/client/v4"
 const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+const wizardTag  = "nahan-wizard"
 
 var reader = bufio.NewReader(os.Stdin)
 
@@ -254,6 +256,42 @@ func cfUploadWorker(accountID, workerName, token, scriptContent, dbID string) er
 		return fmt.Errorf("upload failed: %s", string(errs))
 	}
 	return nil
+}
+
+
+func addWizardTag(accountID, workerName, token string) {
+	cfRequest("PUT",
+		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-tags", accountID, workerName),
+		token,
+		[]string{wizardTag},
+	)
+}
+
+func getWorkerTags(accountID, workerName, token string) []string {
+	result, err := cfRequest("GET",
+		fmt.Sprintf("/accounts/%s/workers/scripts/%s/script-tags", accountID, workerName),
+		token, nil,
+	)
+	if err != nil {
+		return nil
+	}
+	raw, _ := result["result"].([]interface{})
+	var tags []string
+	for _, t := range raw {
+		if s, ok := t.(string); ok {
+			tags = append(tags, s)
+		}
+	}
+	return tags
+}
+
+func hasWizardTag(tags []string) bool {
+	for _, t := range tags {
+		if t == wizardTag {
+			return true
+		}
+	}
+	return false
 }
 
 func getAccounts(token string) ([]map[string]interface{}, error) {
@@ -653,6 +691,7 @@ func installNahan() {
 		}
 
 		fmt.Printf("\n %s Deployed! %s%s%s\n", OK, CYAN, workerDomain, NC)
+		addWizardTag(accID, workerName, sessionToken)
 
 		deployedEntries = append(deployedEntries, WorkerEntry{
 			AccountID:   accID,
@@ -708,7 +747,11 @@ func printWorkerList(workers []WorkerEntry, color string) {
 	for _, g := range groups {
 		fmt.Printf(" %s%s%s\n", GREEN+BOLD, g.name, NC)
 		for _, w := range g.workers {
-			fmt.Printf("   %s%d)%s %s%s%s", color, counter, NC, CYAN, w.WorkerName, NC)
+			if w.Tagged {
+				fmt.Printf("   %s%d)%s %s%s%s %s[nahan]%s", color, counter, NC, CYAN, w.WorkerName, NC, GREEN+BOLD, NC)
+			} else {
+				fmt.Printf("   %s%d)%s %s%s%s", DIM, counter, NC, DIM, w.WorkerName, NC)
+			}
 			if w.WorkerURL != "" {
 				fmt.Printf(" %s(%s)%s", DIM, w.WorkerURL, NC)
 			}
@@ -801,6 +844,7 @@ func updateNahan() {
 			fmt.Printf("\n %s Failed: %s\n", ERR, err.Error())
 		} else {
 			fmt.Printf(" %s Updated!\n", OK)
+			addWizardTag(w.AccountID, w.WorkerName, sessionToken)
 		}
 	}
 
