@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "v1.1.13"
+const VERSION = "v1.1.14"
 
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -813,7 +813,7 @@ func updateNahan() {
 
 	fmt.Printf(" %s Found %s%d%s worker(s):\n\n", OK, CYAN, len(workers), NC)
 	printWorkerList(workers, GREEN)
-	fmt.Printf(" %s Enter numbers to update (e.g: 1,3) or 'all' or '0' to cancel:\n > ", ASK)
+	fmt.Printf(" %s Enter numbers (e.g: 1,3), 'all', 'nahan' (tagged only), or '0' to cancel:\n > ", ASK)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 	if input == "0" || strings.ToLower(input) == "back" {
@@ -821,9 +821,22 @@ func updateNahan() {
 	}
 
 	var selected []WorkerEntry
-	if strings.ToLower(input) == "all" {
+	switch strings.ToLower(input) {
+	case "all":
 		selected = workers
-	} else {
+	case "nahan":
+		for _, w := range workers {
+			if w.Tagged {
+				selected = append(selected, w)
+			}
+		}
+		if len(selected) == 0 {
+			fmt.Printf(" %s No tagged [nahan] workers found.\n", WARN)
+			pressEnter("Press Enter to return...")
+			return
+		}
+		fmt.Printf(" %s Selected %s%d%s tagged worker(s)\n", OK, CYAN, len(selected), NC)
+	default:
 		for _, part := range strings.Split(input, ",") {
 			idx := 0
 			fmt.Sscanf(strings.TrimSpace(part), "%d", &idx)
@@ -933,7 +946,7 @@ func uninstallNahan() {
 
 	fmt.Printf(" %s Found %s%d%s worker(s):\n\n", OK, CYAN, len(workers), NC)
 	printWorkerList(workers, RED)
-	fmt.Printf(" %s Enter numbers to delete (e.g: 1,3) or 'all' or '0' to cancel:\n > ", ASK)
+	fmt.Printf(" %s Enter numbers (e.g: 1,3), 'all', 'nahan' (tagged only), or '0' to cancel:\n > ", ASK)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 	if input == "0" || strings.ToLower(input) == "back" {
@@ -941,9 +954,22 @@ func uninstallNahan() {
 	}
 
 	var selected []WorkerEntry
-	if strings.ToLower(input) == "all" {
+	switch strings.ToLower(input) {
+	case "all":
 		selected = workers
-	} else {
+	case "nahan":
+		for _, w := range workers {
+			if w.Tagged {
+				selected = append(selected, w)
+			}
+		}
+		if len(selected) == 0 {
+			fmt.Printf(" %s No tagged [nahan] workers found.\n", WARN)
+			pressEnter("Press Enter to return...")
+			return
+		}
+		fmt.Printf(" %s Selected %s%d%s tagged worker(s)\n", OK, CYAN, len(selected), NC)
+	default:
 		for _, part := range strings.Split(input, ",") {
 			idx := 0
 			fmt.Sscanf(strings.TrimSpace(part), "%d", &idx)
